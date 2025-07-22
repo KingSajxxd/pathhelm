@@ -1,4 +1,3 @@
-# docker-compose.yml
 version: '3.8'
 
 services:
@@ -6,15 +5,22 @@ services:
     build: .
     ports:
       - "8000:8000"
-    # This service depends on the mock-backend to be running
+    # PathHelm now depends on both redis and the backend
     depends_on:
       - mock-backend
+      - redis
 
   mock-backend:
-    # We don't need a Dockerfile for this simple service
     image: python:3.11-slim
-    # On start, install Flask and run the mock_service.py file
     command: >
       sh -c "pip install Flask && python /app/mock_service.py"
     volumes:
       - ./mock_service.py:/app/mock_service.py
+
+  # --- Add this new service ---
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379" # Expose Redis port for potential local debugging
+    volumes:
+      - ./redis-data:/data
