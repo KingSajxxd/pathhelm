@@ -211,3 +211,4 @@ Stuff.txt
 train_model.ipynb
 create_dataset.py
 api_traffic_data.csv
+/redis-data
