@@ -10,6 +10,9 @@ services:
       - mock-backend
       - redis
 
+    env_file:
+      - .env
+
   mock-backend:
     image: python:3.11-slim
     command: >
@@ -24,3 +27,13 @@ services:
       - "6379:6379" # Expose Redis port for potential local debugging
     volumes:
       - ./redis-data:/data
+
+  dashboard:
+    build:
+      context: .
+      # Use the same Dockerfile but run a different command
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501" # Expose the Streamlit port
+    depends_on:
+      - pathhelm

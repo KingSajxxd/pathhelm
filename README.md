@@ -1,6 +1,6 @@
 # PathHelm 🛡️
 
-**An intelligent, AI-powered API gateway and security proxy designed to protect and control web traffic.**
+**An intelligent, AI-powered API gateway with a live analytics dashboard, designed to protect and control web traffic.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-311/)
@@ -19,11 +19,12 @@ The entire gateway is designed to be **stateless**, offloading all state managem
 * **🧠 AI-Powered Anomaly Detection:** Uses a pre-trained `IsolationForest` model to identify and block suspicious traffic patterns based on frequency, error rates, and path diversity.
 * **⚙️ Stateless Architecture:** All IP tracking and analytics data is stored in Redis, allowing PathHelm instances to be scaled horizontally without data loss.
 * **💾 Persistent State:** Utilizes Docker volumes to ensure that all Redis data (IP history, analytics) survives container restarts.
-* **🐳 Fully Containerized:** The entire stack (Gateway, Backend, Redis) is defined in a single `docker-compose.yml` file for one-command deployment.
-* **📊 Live Analytics:** A built-in `/pathhelm/status` endpoint provides real-time metrics on processed and blocked requests, fetched directly from Redis.
-* **🔌 Easy Integration:** Protect any backend service by simply routing traffic through PathHelm.
+* **📊 Live Analytics Dashboard:** A real-time web dashboard built with Streamlit provides live metrics and charts on gateway activity.
+* **🔧 Environment-Based Configuration:** Easily configure the gateway using a `.env` file without changing any code.
+* **🐳 Fully Containerized:** The entire stack (Gateway, Backend, DB, Dashboard) is defined in a single `docker-compose.yml` file for one-command deployment.
 
 ## Architecture
+
 
                            +-------------------+
                            |       User        |
@@ -31,22 +32,22 @@ The entire gateway is designed to be **stateless**, offloading all state managem
                                     |
                                     | (Request)
                                     v
-
 +-------------------------------------------------------------------------+
 | Your Server / Docker Host                                               |
 |                                                                         |
-|       +-------------------+      +-------------------+                  |
-|       |   PathHelm (AI)   |<---->|   Redis DB        | (Stateful)       |
-|       |   (Port 8000)     |      |   (Port 6379)     |                  |
-|       +-------------------+      +-------------------+                  |
-|            | (Forwarded if safe)                                        |
-|            v                                                            |
-|       +-------------------+                                             |
-|       |   Your Backend    |                                             |
-|       |   Application     |                                             |
-|       +-------------------+                                             |
+|  +------------------+   +-------------------+      +-------------------+|
+|  | Dashboard (8501) |<--|   PathHelm (AI)   |<---->|   Redis DB        ||
+|  | (Streamlit)      |   |   (Port 8000)     |      |   (Port 6379)     ||
+|  +------------------+   +-------------------+      +-------------------+|
+|                              | (Forwarded if safe)                      |
+|                              v                                          |
+|                         +-------------------+                           |
+|                         |   Your Backend    |                           |
+|                         |   Application     |                           |
+|                         +-------------------+                           |
 |                                                                         |
 +-------------------------------------------------------------------------+
+
 
 
 ## Tech Stack
@@ -54,6 +55,7 @@ The entire gateway is designed to be **stateless**, offloading all state managem
 * **Backend & API:** Python with FastAPI
 * **AI/ML:** Scikit-learn, Pandas
 * **Database / State Management:** Redis
+* **Dashboard:** Streamlit
 * **Deployment:** Docker, Docker Compose
 * **Testing:** Postman
 
@@ -72,45 +74,41 @@ The entire gateway is designed to be **stateless**, offloading all state managem
     cd pathhelm
     ```
 
-2.  **Run with Docker Compose:**
-    This single command builds and starts the PathHelm gateway, the mock backend service, and the Redis database.
+2.  **Create your configuration file:**
+    Copy the example environment file to create your local configuration.
+    ```bash
+    cp .env.example .env
+    ```
+    *(You can modify the `.env` file if your setup is different, but the defaults work out-of-the-box.)*
+
+3.  **Run with Docker Compose:**
+    This single command builds and starts the PathHelm gateway, the mock backend, the Redis database, and the analytics dashboard.
     ```bash
     docker compose up --build
     ```
-    PathHelm will be available at `http://localhost:8000`.
 
 ## How to Use
 
-1.  **Test the Gateway:**
-    * **Normal Request:** Send a `GET` request to `http://localhost:8000/some/path`. It will be forwarded to the backend and return a `200 OK`.
-    * **Simulate an Attack:** Use the Postman Runner to send a burst of 30+ requests to `http://localhost:8000/api/test/{{$randomInt}}`. You will see the first few requests pass, followed by `403 Forbidden` errors as PathHelm's AI detects the anomaly.
+1.  **Access the Services:**
+    * **API Gateway:** `http://localhost:8000`
+    * **Live Dashboard:** `http://localhost:8501`
 
-2.  **Check the Status:**
-    Send a `GET` request to `http://localhost:8000/pathhelm/status` to see live analytics fetched from Redis.
-    ```json
-    {
-        "total_requests_processed": 30,
-        "total_requests_blocked": 18,
-        "currently_tracking_ips": 1
-    }
-    ```
+2.  **Test the Gateway:**
+    * **Normal Request:** Send a `GET` request to `http://localhost:8000/some/path`. It will be forwarded and return a `200 OK`.
+    * **Simulate an Attack:** Use the Postman Runner to send a burst of 30+ requests to `http://localhost:8000/api/test/{{$randomInt}}`.
+    * **Observe:** Watch the Live Dashboard at `http://localhost:8501`. You will see the "Total Requests" and "Blocked Requests" counters increase in real-time as the AI identifies and blocks the attack.
 
 3.  **Test Persistence:**
     * Run the Postman test to generate some stats.
     * Stop the containers with `docker compose down`.
     * Restart them with `docker compose up`.
-    * Check `/pathhelm/status` again. The analytics data will still be there!
-
-## Configuration
-
-Currently, the `TARGET_SERVICE_URL` is hardcoded in `app/main.py`. Future versions will use environment variables for easier configuration.
+    * Check the dashboard again. The analytics data will still be there!
 
 ## Future Roadmap
 
-* [ ] **Web Dashboard:** Create a simple web UI (e.g., with Streamlit) to visualize the analytics data.
-* [ ] **Environment-based Configuration:** Use a `.env` file to manage settings like the target URL and Redis connection details.
-* [ ] **Advanced Rule Engine:** Allow users to add custom rules alongside the AI model.
-* [ ] **CI/CD Pipeline:** Set up GitHub Actions to automatically build and test the Docker image on push.
+* [ ] **Unit & Integration Testing:** Implement `pytest` to create a robust test suite for the gateway logic.
+* [ ] **CI/CD Pipeline:** Set up GitHub Actions to automatically run tests and publish the Docker image to Docker Hub.
+* [ ] **Advanced Rule Engine:** Allow users to add custom blocking rules (e.g., by country or IP range) alongside the AI model.
 
 ## Contributing
 
