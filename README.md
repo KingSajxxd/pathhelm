@@ -23,6 +23,7 @@ The entire gateway is designed to be **stateless**, offloading all state managem
 * **🔧 Environment-Based Configuration:** Easily configure the gateway using a `.env` file without changing any code.
 * **🐳 Fully Containerized:** The entire stack (Gateway, Backend, DB, Dashboard) is defined in a single `docker-compose.yml` file for one-command deployment.
 
+```bash
 ## Architecture
 
 
@@ -47,6 +48,7 @@ The entire gateway is designed to be **stateless**, offloading all state managem
 |                         +-------------------+                           |
 |                                                                         |
 +-------------------------------------------------------------------------+
+```
 
 
 
