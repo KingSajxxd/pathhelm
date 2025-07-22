@@ -23,8 +23,11 @@ except FileNotFoundError:
 IP_TIMESTAMPS = defaultdict(list)
 IP_ERROR_COUNT = defaultdict(int)
 IP_PATH_TRACKER = defaultdict(set)
-
 TIMEFRAME = 60 # seconds
+
+# for analytics
+total_requests_processed = 0
+total_requests_blocked = 0
 
 
 # # Configure for rate limiting
@@ -39,12 +42,24 @@ TARGET_SERVICE_URL = "http://mock-backend:5000"
 
 app = FastAPI(title="PathHelm Gateway")
 
+@app.get("/pathhelm/status", tags=["PathHelm Internals"])
+async def get_status():
+    """Returns the current status and analytics of the gateway"""
+    return {
+        "total_requests_processed": total_requests_processed,
+        "total_requests_blocked": total_requests_blocked,
+        "currently_tracking_ips": len(IP_TIMESTAMPS) 
+    }
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
     """
     captures all incoming requests and forwards 
     them to the target service
     """
+
+    global total_requests_processed, total_requests_blocked
+    total_requests_processed += 1
     # rate limiter logic
     client_ip = request.client.host
     current_time = time.time()
@@ -80,6 +95,7 @@ async def proxy(request: Request, path: str):
 
 
         if prediction[0] == -1: # anomaly
+            total_requests_blocked += 1
             print(f"ANOMALY DETECTED from IP: {client_ip}. Features: {live_features.values}. Blocking request.")
             return Response(content="Forbidden: Malicious activity suspected", status_code=403)
     try:
