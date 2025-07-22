@@ -1,5 +1,5 @@
 # app/main.py
-from pandas._libs.tslibs import timestamps
+import os
 import requests
 import time
 import pickle
@@ -21,24 +21,21 @@ except FileNotFoundError:
     print(f"Error: Model file not found at {MODEL_PATH}. Gateway will not use AI.")
     model = None
 
+
+TARGET_SERVICE_URL = os.getenv("TARGET_SERVICE_URL", "http://mock-backend:5000")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+# Global states and constants
+TIMEFRAME = 60 # seconds
+
 # redis connection
 try:
-    # hostname 'redis' is the service name from docker-compose
-    r = redis.Redis(host='redis', port=6379, db=0, decode_responses=True)
-    r.ping() # check connection
-    print("Connected to Redis successfully.")
-except redis.exceptions.ConnctionError as e:
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+    r.ping()
+    print(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}.")
+except redis.exceptions.ConnectionError as e:
     print(f"Could not connect to Redis: {e}. AI features will be disabled.")
     r = None
-
-# Global states and constants
-
-TIMEFRAME = 60 # seconds
-# the service to protect. From Docker's network
-TARGET_SERVICE_URL = "http://mock-backend:5000"
-# # for analytics
-# total_requests_processed = 0
-# total_requests_blocked = 0
 
 
 app = FastAPI(title="PathHelm Gateway")
