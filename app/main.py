@@ -26,7 +26,13 @@ TARGET_SERVICE_URL = os.getenv("TARGET_SERVICE_URL", "http://mock-backend:5000")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 # Global states and constants
-TIMEFRAME = 60 # seconds
+TIMEFRAME = 60 # seconds #For AI
+
+# Rate limiting configuration
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", 100))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", 60))
+
 
 # redis connection
 try:
@@ -61,6 +67,9 @@ async def proxy(request: Request, path: str):
     captures all incoming requests and forwards 
     them to the target service
     """
+
+    client_ip = request.client.host
+
     # API key authentication logic
     api_key = request.headers.get("x-api-key") # get the apikey from the x-api-key header
 
@@ -80,13 +89,30 @@ async def proxy(request: Request, path: str):
 
     print(f"Request from client_id: {client_id} using API key: {api_key}")
 
-    
+    # rate limiting logic
+    if RATE_LIMIT_ENABLED and r:
+        # usicng client id for rate limiting
+        rate_limit_key_id = f"rate_limit:{client_id}"
+
+        # using client ip for rate limiting
+        # rate_limit_key_id = f"rate_limit:{client_ip}"
+
+        # using a redis pipeline for efficiency
+        pipe = r.pipeline()
+        pipe.incr(rate_limit_key_id) # increment the counter
+        pipe.expire(rate_limit_key_id, RATE_LIMIT_WINDOW_SECONDS) # set/reset the expiry time
+
+        current_requests, _ = pipe.execute()
+
+        if current_requests > RATE_LIMIT_PER_MINUTE:
+            print(f"Rate limit exceeded for {rate_limit_key_id}. Current: {current_requests}, Limit: {RATE_LIMIT_PER_MINUTE}")
+            raise HTTPException(status_code=429, detail=f"Too many requests: Limit {RATE_LIMIT_PER_MINUTE} per {RATE_LIMIT_WINDOW_SECONDS} seconds")
+
+
     if r:
         # Increment the total requests counter in Redis
         r.incr("analytics:total_requests")
         
-    # rate limiter logic
-    client_ip = request.client.host
 
 # AI prediction logic using redis
     if r and model:
