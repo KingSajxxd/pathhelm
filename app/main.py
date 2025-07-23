@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import redis
 # from collections import defaultdict
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException
 
 # loading model and configuration
 MODEL_PATH = "model.pkl"
@@ -61,6 +61,26 @@ async def proxy(request: Request, path: str):
     captures all incoming requests and forwards 
     them to the target service
     """
+    # API key authentication logic
+    api_key = request.headers.get("x-api-key") # get the apikey from the x-api-key header
+
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized: API Key missing")
+    
+    # check is redis is up and running before trying to validate the key
+    if not r:
+        print("Warning: Redis not connected, cannot validate API key.")
+        raise HTTPException(status_code=500, detail="internal Server Error: Authentication service unavailbale")
+    
+    #  check the apikey against redis
+    client_id = r.get(f"api_key:{api_key}")
+
+    if not client_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid API key")
+
+    print(f"Request from client_id: {client_id} using API key: {api_key}")
+
+    
     if r:
         # Increment the total requests counter in Redis
         r.incr("analytics:total_requests")
