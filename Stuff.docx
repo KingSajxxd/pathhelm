@@ -1,0 +1,77 @@
+# create_dataset.py
+
+
+np.random.normal()	                  Simulate realistic distributions (like normal user traffic)
+np.random.uniform()	                  Simulate random ranges (like error rates)
+pd.DataFrame()	                      Create table-like structure
+.concat() + .sample()	              Merge and shuffle datasets
+to_csv()	                          Save your data to a 
+pd.concat()                           joins the normal and attack data together
+.sample(frac=1)                       shuffles all rows randomly
+.reset_index(drop=True)               resets the row numbers after shuffling
+
+#app/main.py
+
+r.pipeline()
+
+This creates a "pipeline" object. A pipeline batches multiple Redis commands together and sends them to the Redis server in a single round trip.
+# Machine Learning Model used
+
+"Why IsolationForest?"
+
+Reason	                                          Explanation
+
+Built for Anomalies	                              Designed specifically to find outliers
+Fast and Efficient	                              Scales to large datasets
+No Labels Needed	                              Works in unsupervised settings
+Real-World Ready	                              Works great for security, fraud, API monitoring
+
+
+CI/CD with GitHub Actions
+
+What is CI/CD?
+
+Continuous Integration (CI): Automatically testing your code every time you push a change to GitHub. 
+This catches bugs early and ensures your project is always in a working state.
+
+Continuous Deployment (CD): Automatically deploying your application after the tests pass. 
+For this project, our "deployment" step will be to build the Docker image to prove it works.
+
+
+Tier 1, Enhancement 1: Add API Key Authentication ✅
+Tier 1, Enhancement 2: More Sophisticated Rate Limiting ✅
+Tier 1, Enhancement 3: Allow Whitelisting/Blacklisting of IPs ✅
+
+Tier 2, Enhancement 1: More Advanced AI Model Features (Feature Engineering)
+
+1. What is Feature Engineering for AI Models?
+
+Feature engineering is the process of using domain knowledge to extract features from raw data 
+that are then used to train machine learning models. The goal is to create features that make the 
+machine learning algorithm work better.
+
+User-Agent Analysis:
+
+* is_empty_user_agent (Binary: 0 or 1): Is the User-Agent header missing or empty? (Common for simple bots).
+
+* user_agent_length (Numerical): The length of the User-Agent string. (Very short or very long UAs can be suspicious).
+
+Request Body Analysis (for POST/PUT/PATCH requests):
+
+* request_body_size (Numerical): The size of the request body in bytes. (Sudden large payloads can indicate data exfiltration or malformed requests).
+
+* is_json_content_type (Binary: 0 or 1): Is the Content-Type header application/json? (Many APIs expect JSON, but non-JSON or unexpected types could be suspicious).
+
+Header Analysis:
+
+* num_headers (Numerical): The total number of headers in the request. (Unusually high or low numbers could be suspicious).
+
+
+ if request.method in ["POST", "PUT", "PATCH"]:
+        # Await the body to get its size. This consumes the body, so we'll need to re-read it later.
+        # For proxying, we need to ensure the body is available again.
+        # FastAPI's Request.body() can only be awaited once.
+        # To handle this, we'll read it once, store it, and then pass it to requests.request.
+        body_bytes = await request.body()
+        request_body_size = len(body_bytes)
+        request._body = body_bytes # Store it back for the proxy request

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import redis
 # from collections import defaultdict
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, status
 
 # loading model and configuration
 MODEL_PATH = "model.pkl"
@@ -33,6 +33,12 @@ RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", 100))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", 60))
 
+# Admin apikey and ip list keys
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+# print(f"DEBUG: Loaded ADMIN_API_KEY from environment: '{ADMIN_API_KEY}' (Length: {len(ADMIN_API_KEY) if ADMIN_API_KEY else 'None'})")
+IP_BLACKLIST_KEY = "ip_blacklist"
+IP_WHITELIST_KEY = "ip_whitelist"
+
 
 # redis connection
 try:
@@ -47,9 +53,9 @@ except redis.exceptions.ConnectionError as e:
 app = FastAPI(title="PathHelm Gateway")
 
 @app.get("/pathhelm/status", tags=["PathHelm Internals"])
-async def get_status():
+async def get_status(request: Request):
     """Returns the current status and analytics of the gateway"""
-    
+    authenticate_admin_key(request)
     # fetch counters from Redis.. if they don't exist, default to 0.
     total_processed = int(r.get("analytics:total_requests") or 0)
     total_blocked = int(r.get("analytics:total_requests_blocked") or 0)
@@ -61,6 +67,112 @@ async def get_status():
         "currently_tracking_ips": len(active_ips) 
     }
 
+# admin endpoints for managing IP lists
+def authenticate_admin_key(request: Request):
+    """
+    helper to authenticate admin apikey
+    """
+    # print(f"DEBUG: Entering authenticate_admin_key for request to {request.url}")
+    if not ADMIN_API_KEY:
+        # print("DEBUG: ADMIN_API_KEY is NOT configured. Raising 500.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Admin API key not configured on gateway.")
+    
+    admin_key_header = request.headers.get("x-admin-api-key")
+
+    # print(f"DEBUG: Incoming X-Admin-Api-Key header: '{admin_key_header}'")
+    # print(f"DEBUG: Expected ADMIN_API_KEY: '{ADMIN_API_KEY}'")
+
+    if not admin_key_header or admin_key_header != ADMIN_API_KEY:
+        # print("DEBUG: Admin authentication failed. Header missing or mismatch. Raising 401.")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized: Invalid Admin API Key.")
+    
+    if not r:
+        # print("DEBUG: Redis not connected during admin auth. Raising 500.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected, cannot manage IP lists.")
+    
+    # print("DEBUG: Admin authentication successful.")
+    
+
+# BLACKLIST
+@app.post("/pathhelm/admin/ip_blacklist", tags=["PathHelm Admin"])
+async def add_to_blacklist(request: Request, ip: str):
+    """
+    Adds an IP address to the blacklist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+    
+    r.sadd(IP_BLACKLIST_KEY, ip)
+    return {"message": f"IP {ip} added to blacklist."}
+
+@app.delete("/pathhelm/admin/ip_blacklist", tags=["PathHelm Admin"])
+async def remove_from_blacklist(request: Request, ip: str):
+    """
+    Removes an IP address from the blacklist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+    
+    r.srem(IP_BLACKLIST_KEY, ip)
+    return {"message": f"IP {ip} removed from blacklist."}
+
+@app.get("/pathhelm/admin/ip_blacklist", tags=["PathHelm Admin"])
+async def get_blacklist(request: Request):
+    """
+    Returns the current IP blacklist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+
+    return {"blacklist": list(r.smembers(IP_BLACKLIST_KEY))}
+
+# WHITELIST
+@app.post("/pathhelm/admin/ip_whitelist", tags=["PathHelm Admin"])
+async def add_to_whitelist(request: Request, ip: str):
+    """
+    Adds an IP address to the whitelist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+    
+    r.sadd(IP_WHITELIST_KEY, ip)
+    return {"message": f"IP {ip} added to whitelist."}
+
+@app.delete("/pathhelm/admin/ip_whitelist", tags=["PathHelm Admin"])
+async def remove_from_whitelist(request: Request, ip: str):
+    """
+    Removes an IP address from the whitelist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+    
+    r.srem(IP_WHITELIST_KEY, ip)
+    return {"message": f"IP {ip} removed from whitelist."}
+
+@app.get("/pathhelm/admin/ip_whitelist", tags=["PathHelm Admin"])
+async def get_whitelist(request: Request):
+    """
+    Returns the current IP whitelist
+    """
+    authenticate_admin_key(request)
+    
+    if not r:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Redis not connected.")
+
+    return {"whitelist": list(r.smembers(IP_WHITELIST_KEY))}
+
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def proxy(request: Request, path: str):
     """
@@ -69,6 +181,59 @@ async def proxy(request: Request, path: str):
     """
 
     client_ip = request.client.host
+    # print(f"DEBUG: Incoming request from client_ip: {client_ip}")
+
+    # ip blacklist/whitelist logic (placed earlier for immediate effect)
+    if r:
+        # check blacklist first
+        # print(f"DEBUG: Checking blacklist for IP: {client_ip}")
+        is_blacklisted = r.sismember(IP_BLACKLIST_KEY, client_ip)
+        # print(f"DEBUG: Is {client_ip} blacklisted? {is_blacklisted}")
+
+        if is_blacklisted:
+            print(f"IP {client_ip} is blacklisted. Blocking request.")
+            # Onllly if u want the counter to increment for balcklisted ips, uncomment this
+            # if r: # Increment blocked counter for blacklisted IPs
+            #     r.incr("analytics:total_requests_blocked")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Your IP is blacklisted")
+        
+        # check whitelist next
+        # print(f"DEBUG: Checking whitelist for IP: {client_ip}")
+        is_whitelisted = r.sismember(IP_WHITELIST_KEY, client_ip)
+        # print(f"DEBUG: Is {client_ip} whitelisted? {is_whitelisted}")
+        if is_whitelisted:
+            print(f"IP {client_ip} is whitelisted. Allowing request, bypassing other protocols.")
+            # increment total requests, but bypass apikey, ratelimit and ai
+            if r:
+                r.incr("analytics:total_requests")
+                # direct proxy
+                try:
+                    response = requests.request(
+                        method=request.method,
+                        url=f"{TARGET_SERVICE_URL}/{path}",
+                        # Pass along query headers, query params, and body
+                        headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
+                        params=request.query_params,
+                        data=await request.body(),
+                        stream=True # essential for handling file uploads or large responses
+                    )
+                    # We still track their activity (timestamps, paths)but dont increment error count or block with AI
+                    if r:
+                        # add current request timestamp to a sorted set
+                        r.zadd(f"{client_ip}:timestamps", {str(time.time()): time.time()})
+                        r.expire(f"{client_ip}:timestamps", TIMEFRAME)
+                        # add the accessed path to a set for this ip
+                        r.sadd(f"{client_ip}:paths", path)
+                        r.expire(f"{client_ip}:paths", TIMEFRAME)
+
+                    return Response(
+                        content=response.content,
+                        status_code=response.status_code,
+                        headers=dict(response.headers)
+                    )
+                except requests.exceptions.RequestException as e:
+                    return Response(content=f"An error occurred while proxying: {e}", status_code=status.HTTP_502_BAD_GATEWAY)
+
 
     # API key authentication logic
     api_key = request.headers.get("x-api-key") # get the apikey from the x-api-key header
@@ -106,6 +271,8 @@ async def proxy(request: Request, path: str):
 
         if current_requests > RATE_LIMIT_PER_MINUTE:
             print(f"Rate limit exceeded for {rate_limit_key_id}. Current: {current_requests}, Limit: {RATE_LIMIT_PER_MINUTE}")
+            if r:
+                r.incr("analytics:total_requests_blocked")
             raise HTTPException(status_code=429, detail=f"Too many requests: Limit {RATE_LIMIT_PER_MINUTE} per {RATE_LIMIT_WINDOW_SECONDS} seconds")
 
 
@@ -113,6 +280,30 @@ async def proxy(request: Request, path: str):
         # Increment the total requests counter in Redis
         r.incr("analytics:total_requests")
         
+    # advanced AI prediction logic
+    user_agent = request.headers.get("user-agent", "")
+    content_type = request.headers.get("content-type", "")
+
+    # analyzing user_agent
+    is_empty_user_agent = 1 if not user_agent else 0
+    user_agent_length = len(user_agent)
+
+    # analyzing request body (only for POST/PUT/PATCH)
+    body_bytes = b''
+    request_body_size = 0
+    is_json_content_type = 0
+    if request.method in ["POST", "PUT", "PATCH"]:
+        # read once, store it, and then pass it to requests.request
+        body_bytes = await request.body()
+        request_body_size = len(body_bytes)
+        request._body = body_bytes
+
+        if "application/json" in content_type.lower():
+            is_json_content_type = 1
+
+    # analyzing headers
+    num_headers = len(request.headers)
+    
 
 # AI prediction logic using redis
     if r and model:
@@ -139,9 +330,14 @@ async def proxy(request: Request, path: str):
         unique_paths = r.scard(paths_key)
 
         live_features = pd.DataFrame(
-            [[request_frequency, error_rate, unique_paths]],
-            columns=['request_frequency', 'error_rate', 'unique_paths_accessed']
+            [[request_frequency, error_rate, unique_paths,
+              is_empty_user_agent, user_agent_length, request_body_size,
+              is_json_content_type, num_headers]],
+            columns=['request_frequency', 'error_rate', 'unique_paths_accessed',
+                     'is_empty_user_agent', 'user_agent_length',
+                     'request_body_size', 'is_json_content_type', 'num_headers']
         )
+
         prediction = model.predict(live_features)
 
 
@@ -159,7 +355,7 @@ async def proxy(request: Request, path: str):
             # Pass along query headers, query params, and body
             headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
             params=request.query_params,
-            data=await request.body(),
+            data=body_bytes if request.method in ["POST", "PUT", "PATCH"] else None,
             stream=True # Essential for handling file uploads or large responses
         )
 
@@ -185,4 +381,4 @@ async def proxy(request: Request, path: str):
             headers=dict(response.headers)
         )
     except requests.exceptions.RequestException as e:
-        return Response(content=f"An error occurred while proxying: {e}", status_code=502)
+        return Response(content=f"An error occurred while proxying: {e}", status_code=status.HTTP_502_BAD_GATEWAY)
