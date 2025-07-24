@@ -3,6 +3,7 @@ import streamlit as st
 import requests
 import time
 import pandas as pd
+import os
 
 # page Configuration
 st.set_page_config(
@@ -16,11 +17,13 @@ st.title("🛡️ PathHelm Live Analytics")
 
 # fetching data
 PATHHELM_STATUS_URL = "http://pathhelm:8000/pathhelm/status"
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+HEADERS = {"X-Admin-API-Key": ADMIN_API_KEY} if ADMIN_API_KEY else {}
 
 def get_stats():
     """fetches stats from the PathHelm status endpoint."""
     try:
-        response = requests.get(PATHHELM_STATUS_URL, timeout=2)
+        response = requests.get(PATHHELM_STATUS_URL, headers=HEADERS, timeout=2)
         response.raise_for_status()  # exception for bad status codes
         return response.json()
     except requests.exceptions.RequestException as e:

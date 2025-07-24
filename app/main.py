@@ -53,9 +53,9 @@ except redis.exceptions.ConnectionError as e:
 app = FastAPI(title="PathHelm Gateway")
 
 @app.get("/pathhelm/status", tags=["PathHelm Internals"])
-async def get_status():
+async def get_status(request: Request):
     """Returns the current status and analytics of the gateway"""
-    
+    authenticate_admin_key(request)
     # fetch counters from Redis.. if they don't exist, default to 0.
     total_processed = int(r.get("analytics:total_requests") or 0)
     total_blocked = int(r.get("analytics:total_requests_blocked") or 0)
@@ -192,6 +192,9 @@ async def proxy(request: Request, path: str):
 
         if is_blacklisted:
             print(f"IP {client_ip} is blacklisted. Blocking request.")
+            # Onllly if u want the counter to increment for balcklisted ips, uncomment this
+            # if r: # Increment blocked counter for blacklisted IPs
+            #     r.incr("analytics:total_requests_blocked")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Your IP is blacklisted")
         
         # check whitelist next
@@ -268,6 +271,8 @@ async def proxy(request: Request, path: str):
 
         if current_requests > RATE_LIMIT_PER_MINUTE:
             print(f"Rate limit exceeded for {rate_limit_key_id}. Current: {current_requests}, Limit: {RATE_LIMIT_PER_MINUTE}")
+            if r:
+                r.incr("analytics:total_requests_blocked")
             raise HTTPException(status_code=429, detail=f"Too many requests: Limit {RATE_LIMIT_PER_MINUTE} per {RATE_LIMIT_WINDOW_SECONDS} seconds")
 
 
@@ -275,6 +280,30 @@ async def proxy(request: Request, path: str):
         # Increment the total requests counter in Redis
         r.incr("analytics:total_requests")
         
+    # advanced AI prediction logic
+    user_agent = request.headers.get("user-agent", "")
+    content_type = request.headers.get("content-type", "")
+
+    # analyzing user_agent
+    is_empty_user_agent = 1 if not user_agent else 0
+    user_agent_length = len(user_agent)
+
+    # analyzing request body (only for POST/PUT/PATCH)
+    body_bytes = b''
+    request_body_size = 0
+    is_json_content_type = 0
+    if request.method in ["POST", "PUT", "PATCH"]:
+        # read once, store it, and then pass it to requests.request
+        body_bytes = await request.body()
+        request_body_size = len(body_bytes)
+        request._body = body_bytes
+
+        if "application/json" in content_type.lower():
+            is_json_content_type = 1
+
+    # analyzing headers
+    num_headers = len(request.headers)
+    
 
 # AI prediction logic using redis
     if r and model:
@@ -301,9 +330,14 @@ async def proxy(request: Request, path: str):
         unique_paths = r.scard(paths_key)
 
         live_features = pd.DataFrame(
-            [[request_frequency, error_rate, unique_paths]],
-            columns=['request_frequency', 'error_rate', 'unique_paths_accessed']
+            [[request_frequency, error_rate, unique_paths,
+              is_empty_user_agent, user_agent_length, request_body_size,
+              is_json_content_type, num_headers]],
+            columns=['request_frequency', 'error_rate', 'unique_paths_accessed',
+                     'is_empty_user_agent', 'user_agent_length',
+                     'request_body_size', 'is_json_content_type', 'num_headers']
         )
+
         prediction = model.predict(live_features)
 
 
@@ -321,7 +355,7 @@ async def proxy(request: Request, path: str):
             # Pass along query headers, query params, and body
             headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
             params=request.query_params,
-            data=await request.body(),
+            data=body_bytes if request.method in ["POST", "PUT", "PATCH"] else None,
             stream=True # Essential for handling file uploads or large responses
         )
 
