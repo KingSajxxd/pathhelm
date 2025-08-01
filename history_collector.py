@@ -6,15 +6,15 @@ import time
 import os
 from datetime import datetime
 
-# --- Configuration ---
+# config
 PATHHELM_STATUS_URL = os.getenv("PATHHELM_STATUS_URL", "http://pathhelm:8000/pathhelm/status")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
-COLLECTION_INTERVAL_SECONDS = int(os.getenv("COLLECTION_INTERVAL_SECONDS", 60)) # Collect every 60 seconds
+COLLECTION_INTERVAL_SECONDS = int(os.getenv("COLLECTION_INTERVAL_SECONDS", 60)) # collect every 60 seconds
 DB_FILE = "/code/history-data/pathhelm_history.db"
 
-# Retry mechanism for initial connection to PathHelm
+# retry mechanism for initial connection
 MAX_RETRIES = 10
-RETRY_DELAY_SECONDS = 5 # Wait 5 seconds between retries
+RETRY_DELAY_SECONDS = 5
 
 def init_db():
     """Initializes the SQLite database and creates the table if it doesn't exist."""
@@ -34,11 +34,10 @@ def init_db():
 
 def collect_and_store_data(headers):
     """Fetches data from PathHelm and stores it in the SQLite database."""
-    # --- MODIFIED: Added retry loop for fetching data ---
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(PATHHELM_STATUS_URL, headers=headers, timeout=5)
-            response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+            response.raise_for_status()
             stats = response.json()
 
             timestamp = datetime.now().isoformat()
@@ -55,17 +54,16 @@ def collect_and_store_data(headers):
             conn.commit()
             conn.close()
             print(f"Data collected and stored at {timestamp}: Processed={total_processed}, Blocked={total_blocked}")
-            return # Success, exit retry loop
+            return # victory, exit retry loop
         except requests.exceptions.RequestException as e:
             print(f"Error connecting to PathHelm status endpoint (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
             if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY_SECONDS) # Wait before retrying
+                time.sleep(RETRY_DELAY_SECONDS) # wait before retrying
             else:
                 print(f"Failed to connect to PathHelm status endpoint after {MAX_RETRIES} attempts. Skipping this collection cycle.")
         except Exception as e:
             print(f"An unexpected error occurred during data collection: {e}")
-            return # Exit on unexpected error
-    # --- END MODIFIED ---
+            return
 
 if __name__ == "__main__":
     print("Starting PathHelm History Collector...")
