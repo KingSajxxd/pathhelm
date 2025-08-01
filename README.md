@@ -18,6 +18,10 @@ The entire gateway is designed to be stateless, offloading all state management 
 
 - 🛡️ **IP Whitelisting & Blacklisting**: Allows administrators to explicitly allow (whitelist) or deny (blacklist) specific IP addresses, providing immediate control over access. Whitelisted IPs can bypass other checks.
 
+- 📜 **Persistent Historical Analytics**: A dedicated background service collects and stores gateway metrics into a SQLite database, providing long-term historical data for analysis and trends.
+
+- 📄 **Structured & Centralized Logging**: All gateway logs are now in a JSON format, making them machine-readable and ready for ingestion into a centralized logging platform like the ELK Stack or Grafana Loki.
+
 - 📊 **Enhanced Analytics**: The live dashboard now accurately tracks and displays all blocked requests, whether by IP blacklist, rate limiting, or AI anomaly detection.
 
 - 🔒 **Secured Status Endpoint**: The `/pathhelm/status` endpoint, which provides internal analytics, is now restricted to administrators only via a dedicated `X-Admin-Api-Key`.
@@ -87,7 +91,8 @@ The entire gateway is designed to be stateless, offloading all state management 
    ```bash
    cp .env.example .env
    ```
-   > **IMPORTANT**: Edit your `.env` file to set `ADMIN_API_KEY` and a `your_super_secret_api_key_12345` for `API_KEY` testing. The defaults work out-of-the-box.
+   
+   **IMPORTANT**: Edit your `.env` file to set `ADMIN_API_KEY` and a `your_super_secret_api_key_12345` for `API_KEY` testing. The defaults work out-of-the-box.
 
 3. **Run with Docker Compose:**
    This single command builds and starts the PathHelm gateway, the mock backend, the Redis database, and the analytics dashboard.
@@ -104,19 +109,19 @@ The entire gateway is designed to be stateless, offloading all state management 
 
 ### Test the Gateway
 
-1. **Normal Authenticated Request**: Send a GET request to `http://localhost:8000/some/path` with a valid API Key (e.g., `your_super_secret_api_key_12345`) in the `X-API-Key` header. It will be forwarded and return a 200 OK.
+- **Normal Authenticated Request**: Send a GET request to `http://localhost:8000/some/path` with a valid API Key (e.g., `your_super_secret_api_key_12345`) in the `X-API-Key` header. It will be forwarded and return a 200 OK.
 
-2. **Missing API Key**: Send a request without the `X-API-Key` header. Expected: 401 Unauthorized.
+- **Missing API Key**: Send a request without the `X-API-Key` header. Expected: 401 Unauthorized.
 
-3. **Invalid API Key**: Send a request with a wrong `X-API-Key` value. Expected: 403 Forbidden.
+- **Invalid API Key**: Send a request with a wrong `X-API-Key` value. Expected: 403 Forbidden.
 
-4. **Simulate Rate Limit**: Use the Postman Runner (or curl in a loop) to send rapid requests with a valid API Key to `http://localhost:8000/api/test/{{$randomInt}}`. Configure `RATE_LIMIT_PER_MINUTE` in your `.env` to a low number (e.g., 5) for easy testing. Observe 429 Too Many Requests responses after hitting the configured limit. The "Total Requests Blocked" counter on the dashboard will now increment for these.
+- **Simulate Rate Limit**: Use the Postman Runner (or curl in a loop) to send rapid requests with a valid API Key to `http://localhost:8000/api/test/{{$randomInt}}`. Configure `RATE_LIMIT_PER_MINUTE` in your `.env` to a low number (e.g., 5) for easy testing. Observe 429 Too Many Requests responses after hitting the configured limit. The "Total Requests Blocked" counter on the dashboard will now increment for these.
 
 ### Managing IP Blacklist/Whitelist (Admin Access Required)
 
-- **Admin API Key**: Use the `ADMIN_API_KEY` from your `.env` in the `X-Admin-Api-Key` header for these requests.
+**Admin API Key**: Use the `ADMIN_API_KEY` from your `.env` in the `X-Admin-Api-Key` header for these requests.
 
-> **Important Note on IPs**: When testing from your Docker host, the IP seen by the pathhelm container might be an internal Docker IP (e.g., 172.17.0.1 or 192.168.65.1). Check the pathhelm container logs for `Incoming request from client_ip: YOUR_DOCKER_INTERNAL_IP` to get the correct IP to blacklist/whitelist.
+**Important Note on IPs**: When testing from your Docker host, the IP seen by the pathhelm container might be an internal Docker IP (e.g., `172.17.0.1` or `192.168.65.1`). Check the pathhelm container logs for `Incoming request from client_ip: YOUR_DOCKER_INTERNAL_IP` to get the correct IP to blacklist/whitelist.
 
 #### Blacklist Management
 
@@ -133,30 +138,49 @@ The entire gateway is designed to be stateless, offloading all state management 
 #### Testing IP Lists
 
 - **Test Blacklisted IP**: Once an IP is blacklisted, requests from that IP (even with a valid API key) should receive 403 Forbidden. The "Total Requests Blocked" counter on the dashboard will now increment for these.
+
 - **Test Whitelisted IP**: Once an IP is whitelisted, requests from that IP should always be allowed, bypassing API key, rate limit, and AI checks.
 
 ### Test Secured Status Endpoint (Admin Access Required)
 
 - **Access Status (No Key)**: Try to visit `http://localhost:8000/pathhelm/status` directly in your browser or with curl without any `X-Admin-Api-Key` header. Expected: 401 Unauthorized.
+
 - **Access Status (Valid Admin Key)**: Use `curl -H "X-Admin-Api-Key: YOUR_ADMIN_KEY"` to `http://localhost:8000/pathhelm/status`. Expected: 200 OK with JSON data.
+
 - **Dashboard Functionality**: Ensure your Streamlit dashboard at `http://localhost:8501` is now fetching data correctly. It has been updated to send the `X-Admin-Api-Key`.
 
 ### Simulate an Attack (AI Detection)
 
-1. Use the Postman Runner to send a burst of 30+ requests to `http://localhost:8000/api/test/{{$randomInt}}`.
+1. Use the Postman Runner to send a burst of 30+ requests to `http://localhost:8000/api/test/{{$randomInt}}` with a valid `X-API-Key`.
+
 2. **Observe Dashboard**: Watch the Live Dashboard at `http://localhost:8501`. You will see the "Total Requests" and "Blocked Requests" counters increase in real-time as the AI identifies and blocks the attack.
 
-### Test Persistence
+### Observe Structured Logs
 
-1. Run the Postman test to generate some stats, add/remove some IPs from lists.
+After generating traffic, view the logs for the pathhelm service:
+
+```bash
+docker logs pathhelm-pathhelm-1 --tail 50
+```
+
+You will now see log lines in a machine-readable JSON format, containing detailed information about each request (e.g., client IP, method, path, status code, and security actions).
+
+### Test Persistent Dashboard History
+
+1. Generate some traffic (normal, blocked, etc.) and let the history-collector run for at least a few minutes (the default interval is 60 seconds).
+
 2. Stop the containers with `docker compose down`.
+
 3. Restart them with `docker compose up`.
-4. Check the dashboard and IP lists again. The analytics data and IP lists will still be there!
+
+4. Check the dashboard again. The live counters will be reset, but the historical charts and table will show the data you generated before the restart.
 
 ## Future Roadmap
 
 - [ ] **Unit & Integration Testing**: Implement pytest to create a robust test suite for the gateway logic.
+
 - [ ] **CI/CD Pipeline**: Set up GitHub Actions to automatically run tests and publish the Docker image to Docker Hub.
+
 - [ ] **Advanced Rule Engine**: Allow users to add more granular custom blocking rules (e.g., by country, specific header values, or request body patterns) alongside the AI model and IP lists.
 
 ## Contributing
@@ -171,4 +195,4 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License. See LICENSE for more information.
