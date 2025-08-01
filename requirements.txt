@@ -5,3 +5,4 @@ pandas==2.2.2
 scikit-learn==1.5.0
 redis==5.0.7
 streamlit==1.36.0
+python-json-logger==2.0.7

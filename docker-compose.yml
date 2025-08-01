@@ -3,11 +3,9 @@ services:
     build: .
     ports:
       - "8000:8000"
-    # PathHelm now depends on both redis and the backend
     depends_on:
       - mock-backend
       - redis
-
     env_file:
       - .env
 
@@ -18,11 +16,10 @@ services:
     volumes:
       - ./mock_service.py:/app/mock_service.py
 
-  # --- Add this new service ---
   redis:
     image: "redis:alpine"
     ports:
-      - "6379:6379" # Expose Redis port for potential local debugging
+      - "6379:6379"
     volumes:
       - ./redis-data:/data
 
@@ -31,8 +28,32 @@ services:
       context: .
     command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
     ports:
-      - "8501:8501" # Expose the Streamlit port
+      - "8501:8501"
     depends_on:
       - pathhelm
     env_file:
       - .env
+    volumes:
+      - ./history-data:/code/history-data
+
+  history-collector:
+    build:
+      context: .
+    environment: # ADDED: Force Python output unbuffered
+      - PYTHONUNBUFFERED=1
+    # MODIFIED: Change command for debugging
+    command: >
+      sh -c "ls -l /code/ && python /code/history_collector.py"
+    depends_on:
+      - pathhelm
+      - redis
+    env_file:
+      - .env
+    volumes:
+      # Ensure the history_collector.py itself is mounted directly for consistency
+      - ./history_collector.py:/code/history_collector.py
+      # Mount the history-data directory for the SQLite DB
+      - ./history-data:/code/history-data
+
+volumes:
+  history-data: # Define the named volume

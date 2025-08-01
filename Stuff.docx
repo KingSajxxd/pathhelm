@@ -75,3 +75,39 @@ Header Analysis:
         body_bytes = await request.body()
         request_body_size = len(body_bytes)
         request._body = body_bytes # Store it back for the proxy request
+
+Tier 2, Enhancement 2: Persistent Dashboard History ✅
+
+Persistent dashboard history means storing your key metrics (total requests, blocked requests, etc.) in a more 
+durable and query-friendly database over time. This allows you to:
+
+* Review Past Performance: See trends, identify peak attack times, or analyze long-term traffic patterns.
+* Post-Mortem Analysis: Investigate incidents that happened days or weeks ago.
+* Reporting: Generate reports on API usage and security over extended periods.
+
+How it Works (Conceptually):
+       
+       1. Background Process: A new, lightweight background process will periodically wake up.
+       2. Fetch Live Data: This process will query PathHelm's /pathhelm/status endpoint (using the admin key).
+       3. Store Historically: It will then take these live metrics and append them to a simple, 
+           persistent database. For simplicity and to avoid introducing a new complex database, we can use a SQLite database. SQLite is a 
+           file-based database, meaning it's very easy to set up (just a file!) and doesn't require a separate server process.
+       4. Dashboard Update: The Streamlit dashboard will then be modified to query this SQLite database for historical data, allowing users to select date ranges or view trends.
+
+Tier 2, Enhancement 3: Centralized Logging
+
+Centralized logging involves collecting logs from all your services into a single, searchable, and analyzable platform
+
+Purpose:
+
+    1. Troubleshooting: Quickly diagnose issues by searching across all logs.
+    2. Monitoring & Alerting: Set up alerts for specific error patterns or security events.
+    3. Auditing: Keep a record of all requests and actions for compliance or security audits.
+    4. Performance Analysis: Analyze request patterns, latencies, and error rates over time.
+
+How it Works (Conceptually):
+
+    1. Structured Logging: Instead of just plain text, logs are formatted as JSON. This makes them machine-readable and easy to parse by a logging system.
+    2. Log Shipper: A lightweight agent (like Filebeat or Fluentd) runs in each service's container (or as a sidecar) or your Docker logging driver is configured to send logs directly. This agent collects logs and forwards them to a central logging server.
+    3. Logging Server: A central server (e.g., Elasticsearch or Loki) stores and indexes the logs.
+    4. Visualization/Analysis: A UI (e.g., Kibana for Elasticsearch, Grafana for Loki) allows you to search, filter, visualize, and analyze your logs.
