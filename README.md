@@ -107,6 +107,37 @@ The entire gateway is designed to be stateless, offloading all state management 
    docker compose up --build
    ```
 
+4. **Set up API Keys in Redis:**
+   PathHelm uses Redis to store API keys. You need to add at least one API key for testing.
+
+   **Find your Redis container name:**
+   ```bash
+   docker compose ps
+   ```
+   Look for the Redis container name (e.g., `pathhelm-redis-1`).
+
+   **Access Redis CLI:**
+   ```bash
+   docker exec -it pathhelm-redis-1 redis-cli
+   ```
+   (Replace with your actual Redis container name)
+
+   **Add an API key:**
+   ```
+   SET "api_key:your_super_secret_api_key_12345" "test-client"
+   ```
+   
+   **Verify the key (optional):**
+   ```
+   GET "api_key:your_super_secret_api_key_12345"
+   ```
+   Should return `"test-client"`.
+
+   **Exit Redis CLI:**
+   ```
+   exit
+   ```
+
 ### How to Use
 
 #### Access the Services
