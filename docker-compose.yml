@@ -4,12 +4,23 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - mock-backend
+      - mock-backend-1
+      # new backend for load balancing
+      - mock-backend-2 
       - redis
     env_file:
       - .env
+    environment:
+      - TARGET_SERVICE_URLS=http://mock-backend-1:5000,http://mock-backend-2:5000
 
-  mock-backend:
+  mock-backend-1:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install Flask && python /app/mock_service.py"
+    volumes:
+      - ./mock_service.py:/app/mock_service.py
+
+  mock-backend-2:
     image: python:3.11-slim
     command: >
       sh -c "pip install Flask && python /app/mock_service.py"
