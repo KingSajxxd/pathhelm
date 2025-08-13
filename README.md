@@ -27,6 +27,12 @@ The entire gateway is designed to be stateless, offloading all state management 
 
 - 📜 **Persistent Historical Analytics**: A dedicated background service collects and stores gateway metrics into a SQLite database, providing long-term historical data for analysis and trends.
 
+- ⚖️ **Load Balancing**: Distributes incoming requests across multiple backend service instances using a round-robin strategy, ensuring no single server is overwhelmed and improving overall system availability.
+
+- ⚡️ **Circuit Breaker Pattern**: Protects the gateway from repeatedly calling a failing backend service. If a service becomes unresponsive, the circuit "trips" and all subsequent requests are immediately failed, giving the backend time to recover.
+
+- 🔄 **Automatic Retry Mechanism**: Implements a retry policy for transient errors (e.g., a temporary `503 Service Unavailable` response). The gateway will automatically retry a failed request a configurable number of times with a delay before failing completely.
+
 - 📄 **Structured & Centralized Logging**: All gateway logs are now in a JSON format, making them machine-readable and ready for ingestion into a centralized logging platform like the ELK Stack or Grafana Loki.
 
 - 📊 **Enhanced Analytics**: The live dashboard now accurately tracks and displays all blocked requests, whether by IP blacklist, rate limiting, or AI anomaly detection.
