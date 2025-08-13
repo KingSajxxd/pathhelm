@@ -10,6 +10,7 @@ import redis
 from fastapi import FastAPI, Request, Response, HTTPException, status
 import logging
 from pythonjsonlogger import jsonlogger
+from itertools import cycle # for round robin load balancing
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO) # Info level for production
@@ -46,8 +47,13 @@ except FileNotFoundError:
     logger.warning(f"Error: Model file not found at {MODEL_PATH}. Gateway will not use AI.")
     model = None
 
+# multiple target urls for load balancing
+TARGET_SERVICE_URLS_STR = os.getenv("TARGET_SERVICE_URLS", "http://mock-backend:5000")
+TARGET_SERVICE_URLS = [url.strip() for url in TARGET_SERVICE_URLS_STR.split(',')]
+# a cycler for round robin
+backend_cycler = cycle(TARGET_SERVICE_URLS)
+logger.info(f"Configured backend services: {TARGET_SERVICE_URLS}")
 
-TARGET_SERVICE_URL = os.getenv("TARGET_SERVICE_URL", "http://mock-backend:5000")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
@@ -227,7 +233,7 @@ async def proxy(request: Request, path: str):
     client_ip = request.client.host
     # print(f"DEBUG: Incoming request from client_ip: {client_ip}")
     client_ip = request.client.host 
-    # MODIFIED: Log incoming request with structured data
+    # log incoming request with structured data
     logger.info("Incoming request", extra={
         "client_ip": client_ip,
         "method": request.method,
@@ -262,7 +268,7 @@ async def proxy(request: Request, path: str):
                 try:
                     response = requests.request(
                         method=request.method,
-                        url=f"{TARGET_SERVICE_URL}/{path}",
+                        url=f"{selected_target_service}/{path}",
                         # Pass along query headers, query params, and body
                         headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
                         params=request.query_params,
@@ -411,10 +417,13 @@ async def proxy(request: Request, path: str):
             logger.warning(f"ANOMALY DETECTED from IP: {client_ip}. Features: {live_features.values}. Blocking request.")
             return Response(content="Forbidden: Malicious activity suspected", status_code=403)
     try:
+        # select target service using round robin
+        selected_target_service = next(backend_cycler)
+        logger.info(f"Request from {client_ip} being proxied to {selected_target_service}/{path}")
         # Forward request to targetting service
         response = requests.request(
             method=request.method,
-            url=f"{TARGET_SERVICE_URL}/{path}",
+            url=f"{selected_target_service}/{path}",
             # Pass along query headers, query params, and body
             headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
             params=request.query_params,
@@ -442,7 +451,7 @@ async def proxy(request: Request, path: str):
             "method": request.method,
             "path": path,
             "status_code": response.status_code,
-            "target_url": f"{TARGET_SERVICE_URL}/{path}"
+            "target_url": f"{selected_target_service}/{path}"
         })
 
         # return the response from the target service back to the client
@@ -452,5 +461,5 @@ async def proxy(request: Request, path: str):
             headers=dict(response.headers)
         )
     except requests.exceptions.RequestException as e:
-        logger.error(f"An error occurred while proxying request from {client_ip} to {TARGET_SERVICE_URL}/{path}: {e}", exc_info=True)
+        logger.error(f"An error occurred while proxying request from {client_ip} to {selected_target_service}/{path}: {e}", exc_info=True)
         return Response(content=f"An error occurred while proxying: {e}", status_code=status.HTTP_502_BAD_GATEWAY)
