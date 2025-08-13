@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 
-Stuff.docx
+*.docx
 train_model.ipynb
 create_dataset.py
 api_traffic_data.csv

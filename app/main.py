@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, status
 import logging
 from pythonjsonlogger import jsonlogger
 from itertools import cycle # for round robin load balancing
+from enum import Enum # for circuit breaker state management
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO) # Info level for production
@@ -83,6 +84,48 @@ except redis.exceptions.ConnectionError as e:
 
 app = FastAPI(title="PathHelm Gateway")
 
+CIRCUIT_BREAKER_ENABLED = os.getenv("CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
+FAILURE_THRESHOLD = int(os.getenv("FAILURE_THRESHOLD", 5)) # number of failures to trip
+RESET_TIMEOUT = int(os.getenv("RESET-TIMEOUT", 30)) # seconds to wait before moving to half-open
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", 2)) # number of retries for transient errors
+RETRY_DELAY_SECONDS = int(os.getenv("RETRY_DELAY_SECONDS", 1)) # delay between retries
+
+# circuit breaker states
+class CircuitBreakerState(Enum):
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+# circuit breaker class
+class CircuitBreaker:
+    def __init__(self):
+        self.state = CircuitBreakerState.CLOSED
+        self.last_failure_time = None
+        self.failure_count = 0
+
+    def trip(self):
+        """To open state"""
+        self.state = CircuitBreakerState.OPEN
+        self.last_failure_time = time.time()
+        logger.warning("Circuit tripped to OPEN state due to repeated failures.")
+
+    def attempt_reset(self):
+        """To half-open state"""
+        if self.state == CircuitBreakerState.OPEN and (time.time() - self.last_failure_time > RESET_TIMEOUT):
+            self.state = CircuitBreakerState.HALF_OPEN
+            logger.info("Circuit timeout passed. Moving to HALF-OPEN state.")
+            return True
+        return False
+    
+    def close(self):
+        """reset to close state"""
+        self.state = CircuitBreakerState.CLOSED
+        self.failure_count = 0
+        logger.info("Circuit reset to CLOSED state.")
+
+# a dictionary to hold a circuit breaker for each backend
+circuit_breakers = {url: CircuitBreaker() for url in TARGET_SERVICE_URLS}
+
 @app.get("/pathhelm/status", tags=["PathHelm Internals"])
 async def get_status(request: Request):
     """Returns the current status and analytics of the gateway"""
@@ -93,16 +136,22 @@ async def get_status(request: Request):
     
     active_ips = r.keys("*:timestamps") if r else []
 
+    # get CB status for display
+    breaker_statuses = {url: cb.state.value for url, cb in circuit_breakers.items()}
+
     logger.info("Admin accessed /pathhelm/status", extra={
         "total_processed": total_processed,
         "total_blocked": total_blocked,
-        "active_ips_count": len(active_ips)
+        "active_ips_count": len(active_ips),
+        "circuit_breaker_statuses": breaker_statuses
     })
 
     return {
         "total_requests_processed": total_processed,
         "total_requests_blocked": total_blocked,
-        "currently_tracking_ips": len(active_ips) 
+        "currently_tracking_ips": len(active_ips),
+        "circuit_breaker_statuses": breaker_statuses
+
     }
 
 # admin endpoints for managing IP lists
@@ -265,6 +314,8 @@ async def proxy(request: Request, path: str):
             if r:
                 r.incr("analytics:total_requests")
                 # direct proxy
+                selected_target_service = next(backend_cycler)
+                logger.info(f"Whitelisted request to {client_ip} being proxied to {selected_target_service}/{path}")
                 try:
                     response = requests.request(
                         method=request.method,
@@ -419,18 +470,62 @@ async def proxy(request: Request, path: str):
     try:
         # select target service using round robin
         selected_target_service = next(backend_cycler)
+        # circuit breaker and retry logic
+        circuit_breaker = circuit_breakers[selected_target_service]
         logger.info(f"Request from {client_ip} being proxied to {selected_target_service}/{path}")
-        # Forward request to targetting service
-        response = requests.request(
-            method=request.method,
-            url=f"{selected_target_service}/{path}",
-            # Pass along query headers, query params, and body
-            headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
-            params=request.query_params,
-            data=body_bytes if request.method in ["POST", "PUT", "PATCH"] else None,
-            stream=True # Essential for handling file uploads or large responses
-        )
+        
+        # checking circuit breaker state
+        if CIRCUIT_BREAKER_ENABLED and circuit_breaker.state == CircuitBreakerState.OPEN:
+            # checking if its time to half-open
+            if circuit_breaker.attempt_reset():
+                logger.info(f"Circuit for {selected_target_service} is now HALF-OPEN. Attempting a single request.")
+            else:
+                logger.warning(f"Circuit for {selected_target_service} is OPEN. Failing fast.")
+                return Response(content="Service Unavailable", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # retry logic loop
+        for retry_count in range(MAX_RETRIES + 1):
+            try:
+                logger.info(f"Attempt {retry_count + 1}/{MAX_RETRIES + 1}: Proxies request from {client_ip} to {selected_target_service}/{path}")
+    
+                # Forward request to targetting service
+                response = requests.request(
+                    method=request.method,
+                    url=f"{selected_target_service}/{path}",
+                    # Pass along query headers, query params, and body
+                    headers={k: v for k, v in request.headers.items() if k.lower() != 'host'},
+                    params=request.query_params,
+                    data=body_bytes if request.method in ["POST", "PUT", "PATCH"] else None,
+                    stream=True # Essential for handling file uploads or large responses
+                )
 
+                # check CB state
+                if CIRCUIT_BREAKER_ENABLED:
+                    if circuit_breaker.state == CircuitBreakerState.HALF_OPEN:
+                        circuit_breaker.close()
+                    elif circuit_breaker.state == CircuitBreakerState.CLOSED:
+                        circuit_breaker.failure_count = 0 # reset failure count on success
+
+                if response.status_code >= 500:
+                    if retry_count < MAX_RETRIES:
+                        logger.warning(f"Transient error from {selected_target_service} (status {response.status_code}). Retrying in {RETRY_DELAY_SECONDS} seconds.")
+                        time.sleep(RETRY_DELAY_SECONDS)
+                        continue
+                    else:
+                        raise requests.exceptions.RequestException(f"Max retries exceeded for {selected_target_service}")
+                break
+            except requests.exceptions.RequestException as e:
+                if retry_count < MAX_RETRIES:
+                    logger.warning(f"Connection error to {selected_target_service}: {e}. Retrying in {RETRY_DELAY_SECONDS} seconds.")
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+                else:
+                    # after all retries fail, handle and trip
+                    logger.error(f"Failed to proxy request to {selected_target_service} after {MAX_RETRIES + 1} attempts: {e}", exc_info=True)
+                    if CIRCUIT_BREAKER_ENABLED:
+                        circuit_breaker.failure_count += 1
+                        if circuit_breaker.failure_count >= FAILURE_THRESHOLD:
+                            circuit_breaker.trip()
+                    return Response(content=f"An error occured while proxying: {e}", status_code=status.HTTP_502_BAD_GATEWAY)
         # update in redis post request
         if r:
             # if backend returned an error, increment the error count for this IP
